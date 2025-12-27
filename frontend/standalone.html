@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Secret Hitler - AI Arena</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            liberal: {
+              50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb',
+              700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a', 950: '#0f172a'
+            },
+            fascist: {
+              50: '#fef2f2', 100: '#fee2e2', 500: '#ef4444', 600: '#dc2626',
+              700: '#b91c1c', 800: '#991b1b', 900: '#7f1d1d', 950: '#450a0a'
+            },
+            parchment: '#f5e6c8',
+            ink: '#1a1a1a',
+            gold: '#d4a742',
+          },
+          fontFamily: {
+            'display': ['Bebas Neue', 'Impact', 'sans-serif'],
+            'body': ['Crimson Text', 'Georgia', 'serif'],
+            'mono': ['IBM Plex Mono', 'monospace'],
+          },
+        },
+      },
+    }
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 0; background: #0a0a0a; color: #e5e5e5; font-family: 'Crimson Text', Georgia, serif; overflow: hidden; height: 100vh; }
+
+    .noise-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none; z-index: 1000; opacity: 0.03;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    }
+
+    .vignette {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none; z-index: 999;
+      background: radial-gradient(ellipse at center, transparent 0%, rgba(0,0,0,0.4) 100%);
+    }
+
+    .policy-slot {
+      position: relative; width: 48px; height: 72px; border: 2px solid;
+      border-radius: 4px; display: flex; align-items: center; justify-content: center;
+      transition: all 0.3s ease;
+    }
+    .policy-slot.liberal { border-color: #1e40af; background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%); }
+    .policy-slot.fascist { border-color: #991b1b; background: linear-gradient(135deg, #4a1515 0%, #1a0a0a 100%); }
+    .policy-slot.empty { border-color: #333; background: rgba(20, 20, 20, 0.5); border-style: dashed; }
+    .policy-slot.filled { box-shadow: 0 0 20px currentColor; }
+
+    .player-card.dead { filter: grayscale(100%) brightness(0.5); transform: scale(0.95); }
+
+    .speech-bubble {
+      position: relative; background: rgba(245, 230, 200, 0.95); color: #1a1a1a;
+      padding: 12px 16px; border-radius: 8px; max-width: 260px; max-height: 200px;
+      font-family: 'Crimson Text', serif; font-size: 14px; line-height: 1.4;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      overflow-y: auto; overflow-x: hidden;
+    }
+    .speech-bubble::after {
+      content: ''; position: absolute; bottom: -10px; left: 50%; transform: translateX(-50%);
+      border-left: 10px solid transparent; border-right: 10px solid transparent;
+      border-top: 10px solid rgba(245, 230, 200, 0.95);
+    }
+
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: #1a1a1a; }
+    ::-webkit-scrollbar-thumb { background: #d4a742; border-radius: 4px; }
+
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 20px rgba(212, 167, 66, 0.3); }
+      50% { box-shadow: 0 0 40px rgba(212, 167, 66, 0.6); }
+    }
+    .animate-pulse-glow { animation: pulse-glow 2s infinite; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // Model provider styles
+    const MODEL_STYLES = {
+      'GPT': { color: '#10a37f', icon: '◆' },
+      'Claude': { color: '#d4a27f', icon: '◇' },
+      'Gemini': { color: '#4285f4', icon: '✦' },
+      'Llama': { color: '#7c3aed', icon: '◈' },
+      'Grok': { color: '#1da1f2', icon: '✧' },
+    };
+
+    function getModelStyle(name) {
+      for (const [key, style] of Object.entries(MODEL_STYLES)) {
+        if (name.includes(key)) return style;
+      }
+      return { color: '#888', icon: '●' };
+    }
+
+    // Demo game state (7 players: 4 liberals, 2 fascists, 1 hitler)
+    const DEMO_STATE = {
+      round: 4, phase: 'legislative_chancellor', liberalPolicies: 2, fascistPolicies: 3,
+      electionTracker: 1, drawPileSize: 11, winner: null, winCondition: null,
+      players: [
+        { seat: 0, name: 'GPT-4o', role: 'liberal', team: 'liberal', isDead: false, isPresident: false, isChancellor: false },
+        { seat: 1, name: 'GPT-5.1', role: 'fascist', team: 'fascist', isDead: false, isPresident: true, isChancellor: false },
+        { seat: 2, name: 'Claude Opus 4.5', role: 'liberal', team: 'liberal', isDead: false, isPresident: false, isChancellor: true },
+        { seat: 3, name: 'Claude Sonnet 4.5', role: 'hitler', team: 'fascist', isDead: false, isPresident: false, isChancellor: false },
+        { seat: 4, name: 'Gemini 2.5 Flash', role: 'liberal', team: 'liberal', isDead: true, isPresident: false, isChancellor: false },
+        { seat: 5, name: 'Llama 3.3 70B', role: 'liberal', team: 'liberal', isDead: false, isPresident: false, isChancellor: false },
+        { seat: 6, name: 'Grok 4', role: 'fascist', team: 'fascist', isDead: false, isPresident: false, isChancellor: false },
+      ],
+      messages: [
+        { seat: 1, name: 'GPT-5.1', content: 'I trust Claude Opus to make the right choice as Chancellor. We need a liberal policy here.' },
+        { seat: 2, name: 'Claude Opus 4.5', content: 'I received two fascist policies from the President. I have no choice but to enact one.' },
+        { seat: 5, name: 'Llama 3.3 70B', content: 'That seems suspicious. How can there be no liberal policies?' },
+      ],
+      events: [
+        { type: 'round_start', data: { round: 4, president: 1 } },
+        { type: 'nomination', data: { president: 'GPT-5.1', chancellor: 'Claude Opus 4.5' } },
+        { type: 'election_passed', data: { ja: 4, nein: 2 } },
+      ],
+    };
+
+    // Game Board Component
+    function GameBoard({ liberalPolicies, fascistPolicies, electionTracker, drawPileSize, phase, round }) {
+      return (
+        <div className="relative w-[500px] h-[320px] bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] rounded-xl border-2 border-gold/40 shadow-2xl">
+          <div className="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-gold/60 rounded-tl-xl" />
+          <div className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-gold/60 rounded-tr-xl" />
+          <div className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-gold/60 rounded-bl-xl" />
+          <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-gold/60 rounded-br-xl" />
+
+          <div className="p-6 h-full flex flex-col justify-between">
+            {/* Liberal Track */}
+            <div className="flex flex-col items-center">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-3 h-3 rounded-full bg-liberal-500" />
+                <span className="font-display text-lg tracking-widest text-liberal-400">LIBERAL</span>
+              </div>
+              <div className="flex gap-2">
+                {[0,1,2,3,4].map(i => (
+                  <div key={i} className={`policy-slot ${i < liberalPolicies ? 'liberal filled' : 'empty'}`}>
+                    {i < liberalPolicies ? (
+                      <div className="w-8 h-12 bg-gradient-to-b from-liberal-600 to-liberal-800 rounded flex items-center justify-center">
+                        <span className="text-liberal-200 text-lg">✓</span>
+                      </div>
+                    ) : (
+                      <span className="font-mono text-xs text-gray-600">{i + 1}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Center */}
+            <div className="flex items-center justify-between px-8">
+              <div className="text-center">
+                <div className="relative w-12 h-16 mx-auto mb-2">
+                  {[0,1,2].map(i => (
+                    <div key={i} className="absolute inset-0 bg-gradient-to-b from-gray-700 to-gray-900 rounded border border-gray-600"
+                      style={{ transform: `translateY(${-i*2}px) translateX(${-i}px)`, zIndex: 3-i }} />
+                  ))}
+                </div>
+                <span className="font-mono text-xs text-gold/60">{drawPileSize} CARDS</span>
+              </div>
+
+              <div className="text-center">
+                <div className="font-display text-2xl text-gold tracking-wider mb-1">ROUND {round}</div>
+                <div className="font-mono text-xs text-gold/50 uppercase">{phase.replace(/_/g, ' ')}</div>
+              </div>
+
+              <div className="text-center">
+                <div className="flex gap-2 mb-2 justify-center">
+                  {[0,1,2].map(i => (
+                    <div key={i} className={`w-8 h-8 rounded-full border-2 flex items-center justify-center ${
+                      i < electionTracker ? 'bg-fascist-700 border-fascist-500' : 'border-gray-600 bg-gray-900'
+                    }`}>
+                      {i < electionTracker && <span className="text-fascist-200 font-bold text-sm">✕</span>}
+                    </div>
+                  ))}
+                </div>
+                <span className="font-mono text-xs text-gray-500">ELECTION TRACKER</span>
+              </div>
+            </div>
+
+            {/* Fascist Track */}
+            <div className="flex flex-col items-center">
+              <div className="flex gap-2 mb-3">
+                {[0,1,2,3,4,5].map(i => (
+                  <div key={i} className={`policy-slot ${i < fascistPolicies ? 'fascist filled' : 'empty'}`}>
+                    {i < fascistPolicies ? (
+                      <div className="w-8 h-12 bg-gradient-to-b from-fascist-600 to-fascist-900 rounded flex items-center justify-center">
+                        <span className="text-fascist-200 text-lg">☠</span>
+                      </div>
+                    ) : (
+                      <span className="font-mono text-xs text-gray-600">{i + 1}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-fascist-600" />
+                <span className="font-display text-lg tracking-widest text-fascist-400">FASCIST</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Player Card Component
+    function PlayerCard({ player, showRoles, style }) {
+      const modelStyle = getModelStyle(player.name);
+      const roleColors = {
+        liberal: { bg: 'from-liberal-900/80 to-liberal-950/90', border: 'border-liberal-600', badge: 'bg-liberal-700 text-liberal-100' },
+        fascist: { bg: 'from-fascist-900/80 to-fascist-950/90', border: 'border-fascist-600', badge: 'bg-fascist-700 text-fascist-100' },
+        hitler: { bg: 'from-gray-900/80 to-black/90', border: 'border-gold', badge: 'bg-black text-gold border border-gold' },
+        unknown: { bg: 'from-gray-800/80 to-gray-900/90', border: 'border-gray-600', badge: 'bg-gray-700 text-gray-300' },
+      };
+      const isRoleKnown = player.role && player.role !== 'unknown';
+      const colors = showRoles && isRoleKnown ? (roleColors[player.role] || roleColors.unknown) : {
+        bg: 'from-gray-800/80 to-gray-900/90', border: 'border-gray-600', badge: 'bg-gray-700 text-gray-300'
+      };
+
+      return (
+        <div style={style} className={`absolute player-card ${player.isDead ? 'dead' : ''}`}>
+          <div className={`relative w-36 bg-gradient-to-b ${colors.bg} rounded-lg border-2 ${colors.border} shadow-lg overflow-hidden backdrop-blur-sm`}>
+            {player.isDead && (
+              <div className="absolute inset-0 bg-black/60 z-20 flex items-center justify-center">
+                <span className="font-display text-2xl text-fascist-500 rotate-[-15deg]">DEAD</span>
+              </div>
+            )}
+
+            {(player.isPresident || player.isChancellor) && (
+              <div className={`absolute -top-1 left-1/2 -translate-x-1/2 z-10 px-2 py-0.5 rounded-b text-xs font-mono tracking-wider ${
+                player.isPresident ? 'bg-gold text-black' : 'bg-gray-300 text-black'
+              }`}>
+                {player.isPresident ? 'PRESIDENT' : 'CHANCELLOR'}
+              </div>
+            )}
+
+            <div className="h-10 flex items-center justify-center" style={{ backgroundColor: modelStyle.color + '20' }}>
+              <span className="text-2xl" style={{ color: modelStyle.color }}>{modelStyle.icon}</span>
+              <div className="absolute bottom-0 left-0 right-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${modelStyle.color}, transparent)` }} />
+            </div>
+
+            <div className="p-3">
+              <div className="absolute top-12 right-2">
+                <span className="font-mono text-xs text-gray-500">#{player.seat + 1}</span>
+              </div>
+              <h3 className="font-body font-bold text-sm text-white/90 mb-2 pr-6 leading-tight">{player.name}</h3>
+              {showRoles ? (
+                <div className={`inline-block px-2 py-0.5 rounded text-xs font-mono uppercase tracking-wide ${colors.badge}`}>
+                  {player.role === 'hitler' ? '☠ HITLER' : 
+                   player.role === 'fascist' ? '✕ FASCIST' : 
+                   player.role === 'liberal' ? '✓ LIBERAL' : 
+                   '? UNKNOWN'}
+                </div>
+              ) : (
+                <div className="inline-block px-2 py-0.5 rounded text-xs font-mono text-gray-500 bg-gray-800">HIDDEN</div>
+              )}
+            </div>
+            {showRoles && isRoleKnown && <div className={`h-1 ${player.team === 'liberal' ? 'bg-liberal-500' : player.team === 'fascist' ? 'bg-fascist-500' : 'bg-gray-600'}`} />}
+          </div>
+        </div>
+      );
+    }
+
+    // Speech Bubble Component
+    function SpeechBubble({ message, style }) {
+      return (
+        <div style={style} className="absolute z-30 top-full mt-3">
+          <div className="speech-bubble">
+            <p className="text-ink font-body text-sm leading-relaxed italic">"{message.content}"</p>
+            <div className="mt-2 pt-2 border-t border-ink/10">
+              <span className="font-mono text-xs text-ink/50">— {message.name}</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Players Circle Component
+    function PlayersCircle({ players, messages, showRoles, children }) {
+      const centerX = 400, centerY = 320, radiusX = 380, radiusY = 280;
+
+      const getPos = (i, total) => {
+        const angle = -Math.PI/2 + (i/total) * 2 * Math.PI;
+        return { x: centerX + radiusX * Math.cos(angle), y: centerY + radiusY * Math.sin(angle) };
+      };
+
+      // Find the most recent message (only show one speech bubble at a time)
+      const mostRecentMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+
+      return (
+        <div className="relative" style={{ width: centerX*2, height: centerY*2 }}>
+          {players.map((p, i) => {
+            const pos = getPos(i, players.length);
+            const showBubble = mostRecentMessage && mostRecentMessage.seat === p.seat;
+            return (
+              <div key={p.seat}>
+                <PlayerCard player={p} showRoles={showRoles} style={{ left: pos.x, top: pos.y, transform: 'translate(-50%, -50%)' }} />
+                {showBubble && (
+                  <div className="absolute pointer-events-none" style={{ left: pos.x, top: pos.y, transform: 'translate(-50%, -50%)' }}>
+                    <SpeechBubble message={mostRecentMessage} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <div className="absolute" style={{ left: centerX, top: centerY, transform: 'translate(-50%, -50%)' }}>
+            {children}
+          </div>
+          <svg className="absolute inset-0 pointer-events-none" style={{ width: centerX*2, height: centerY*2 }}>
+            <defs>
+              <linearGradient id="lg" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#d4a742" stopOpacity="0" />
+                <stop offset="50%" stopColor="#d4a742" stopOpacity="0.2" />
+                <stop offset="100%" stopColor="#d4a742" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            <ellipse cx={centerX} cy={centerY} rx={radiusX-80} ry={radiusY-80} fill="none" stroke="url(#lg)" strokeWidth="1" strokeDasharray="8 4" opacity="0.5" />
+          </svg>
+        </div>
+      );
+    }
+
+
+    // Game Log Parser
+    function parseGameLog(logData) {
+      const events = logData.events || [];
+      const states = [];
+
+      let currentState = {
+        round: 1, phase: 'setup', liberalPolicies: 0, fascistPolicies: 0,
+        electionTracker: 0, drawPileSize: 17, players: [], messages: [],
+        events: [], winner: null, winCondition: null, presidentSeat: null, chancellorSeat: null,
+      };
+
+      for (const event of events) {
+        const { type, data } = event;
+        currentState = JSON.parse(JSON.stringify(currentState));
+        currentState.events.push({ type, data });
+
+        switch (type) {
+          case 'game_started':
+            currentState.players = data.players.map(p => ({
+              seat: p.seat, name: p.name, role: 'unknown', team: 'unknown',
+              isDead: false, isPresident: false, isChancellor: false,
+            }));
+            currentState.presidentSeat = data.starting_president;
+            if (currentState.players[data.starting_president]) {
+              currentState.players[data.starting_president].isPresident = true;
+            }
+            break;
+          case 'game_setup_complete':
+            if (data.players) {
+              data.players.forEach(p => {
+                if (currentState.players[p.seat]) {
+                  currentState.players[p.seat].model = p.model;
+                  currentState.players[p.seat].modelId = p.model_id;
+                  // Set roles if available (for spectator mode)
+                  if (p.role && p.team) {
+                    currentState.players[p.seat].role = p.role.toLowerCase();
+                    currentState.players[p.seat].team = p.team.toLowerCase();
+                  }
+                }
+              });
+            }
+            break;
+          case 'round_update':
+            currentState.round = data.round;
+            currentState.phase = data.phase;
+            break;
+          case 'chancellor_nominated':
+          case 'nomination_action':
+            currentState.phase = 'election';
+            const chancSeat = data.chancellor_seat ?? data.chancellor;
+            currentState.chancellorSeat = chancSeat;
+            currentState.players.forEach(p => { p.isChancellor = p.seat === chancSeat; });
+            break;
+          case 'election_result':
+            if (data.passed) {
+              currentState.phase = 'legislative_president';
+              currentState.electionTracker = 0;
+            } else {
+              currentState.electionTracker = Math.min(currentState.electionTracker + 1, 3);
+              currentState.players.forEach(p => p.isChancellor = false);
+            }
+            break;
+          case 'legislative_session_start':
+            currentState.phase = 'legislative_president';
+            break;
+          case 'president_discarded':
+          case 'president_discard_action':
+            currentState.phase = 'legislative_chancellor';
+            currentState.drawPileSize = Math.max(0, currentState.drawPileSize - 3);
+            break;
+          case 'policy_enacted':
+            if (data.policy === 'liberal') currentState.liberalPolicies++;
+            else currentState.fascistPolicies++;
+            break;
+          case 'new_round':
+            currentState.round = data.round_number;
+            currentState.phase = 'nomination';
+            currentState.players.forEach(p => {
+              p.isPresident = p.seat === data.president_seat;
+              p.isChancellor = false;
+            });
+            currentState.presidentSeat = data.president_seat;
+            currentState.chancellorSeat = null;
+            currentState.messages = [];
+            break;
+          case 'message':
+          case 'discussion_message':
+            // Only add if not already in messages (avoid duplicates)
+            const msgData = data.player_seat !== undefined ? {
+              seat: data.player_seat,
+              name: data.player_name || data.player,
+              content: data.content || data.message
+            } : {
+              seat: data.seat,
+              name: data.player,
+              content: data.message
+            };
+            // Check if this message already exists (same seat, name, and content)
+            const isDuplicate = currentState.messages.some(m => 
+              m.seat === msgData.seat && 
+              m.name === msgData.name && 
+              m.content === msgData.content
+            );
+            if (!isDuplicate) {
+              currentState.messages.push(msgData);
+            }
+            break;
+          case 'player_investigated':
+          case 'investigate_action':
+            currentState.phase = 'executive_action';
+            break;
+          case 'special_election':
+          case 'special_election_action':
+            currentState.players.forEach(p => {
+              p.isPresident = p.seat === data.new_president || p.seat === data.target;
+            });
+            break;
+          case 'player_executed':
+          case 'execute_action':
+            const targetSeat = data.target;
+            if (currentState.players[targetSeat]) currentState.players[targetSeat].isDead = true;
+            break;
+          case 'game_over':
+            currentState.phase = 'game_over';
+            currentState.winner = data.winner;
+            currentState.winCondition = data.condition;
+            if (data.players) {
+              data.players.forEach(p => {
+                if (currentState.players[p.seat]) {
+                  currentState.players[p.seat].role = p.role;
+                  currentState.players[p.seat].team = p.team;
+                  currentState.players[p.seat].isDead = p.is_dead;
+                }
+              });
+            }
+            break;
+        }
+        states.push(JSON.parse(JSON.stringify(currentState)));
+      }
+      return { states, duration: logData.duration || 0 };
+    }
+
+    function extractRoles(logData) {
+      // First, try to get roles from game_setup_complete (for spectator mode)
+      const setupEvent = logData.events?.find(e => e.type === 'game_setup_complete');
+      if (setupEvent?.data?.players) {
+        const rolesMap = {};
+        setupEvent.data.players.forEach(p => {
+          if (p.seat !== undefined && p.role && p.team) {
+            rolesMap[p.seat] = { 
+              role: p.role.toLowerCase(), 
+              team: p.team.toLowerCase() 
+            };
+          }
+        });
+        if (Object.keys(rolesMap).length > 0) {
+          return rolesMap;
+        }
+      }
+      
+      // Fallback: try to get roles from game_over event
+      const gameOverEvent = logData.events?.find(e => e.type === 'game_over');
+      if (gameOverEvent?.data?.players) {
+        const rolesMap = {};
+        gameOverEvent.data.players.forEach(p => {
+          if (p.seat !== undefined && p.role && p.team) {
+            rolesMap[p.seat] = { 
+              role: p.role.toLowerCase(), 
+              team: p.team.toLowerCase() 
+            };
+          }
+        });
+        if (Object.keys(rolesMap).length > 0) {
+          return rolesMap;
+        }
+      }
+      
+      // If no roles found, check if roles are in any state from the parsed log
+      const parsed = parseGameLog(logData);
+      if (parsed.states.length > 0) {
+        const lastState = parsed.states[parsed.states.length - 1];
+        const rolesMap = {};
+        lastState.players.forEach(p => {
+          if (p.role && p.role !== 'unknown' && p.team && p.team !== 'unknown') {
+            rolesMap[p.seat] = { role: p.role, team: p.team };
+          }
+        });
+        if (Object.keys(rolesMap).length > 0) {
+          return rolesMap;
+        }
+      }
+      
+      return {};
+    }
+
+    function formatDuration(seconds) {
+      if (!seconds) return '0:00';
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    // Main App
+    function App() {
+      const [gameStates, setGameStates] = useState([]);
+      const [currentStateIndex, setCurrentStateIndex] = useState(0);
+      const [gameState, setGameState] = useState(DEMO_STATE);
+      const [showRoles, setShowRoles] = useState(true);
+      const [isPlaying, setIsPlaying] = useState(false);
+      const [playbackSpeed, setPlaybackSpeed] = useState(1500);
+      const [gameLoaded, setGameLoaded] = useState(false);
+      const [gameDuration, setGameDuration] = useState(0);
+      const [roles, setRoles] = useState({});
+      const [isLive, setIsLive] = useState(false);
+      const [liveEvents, setLiveEvents] = useState([]);
+      const [gameRunning, setGameRunning] = useState(false);
+      const chatLogRef = useRef(null);
+
+      // Playback effect
+      useEffect(() => {
+        if (!isPlaying || !gameLoaded || currentStateIndex >= gameStates.length - 1) {
+          if (currentStateIndex >= gameStates.length - 1) setIsPlaying(false);
+          return;
+        }
+        const timer = setTimeout(() => {
+          setCurrentStateIndex(prev => Math.min(prev + 1, gameStates.length - 1));
+        }, playbackSpeed);
+        return () => clearTimeout(timer);
+      }, [isPlaying, currentStateIndex, gameStates.length, playbackSpeed, gameLoaded]);
+
+      // Update game state when index changes
+      useEffect(() => {
+        if (gameStates.length > 0 && gameStates[currentStateIndex]) {
+          const state = JSON.parse(JSON.stringify(gameStates[currentStateIndex]));
+          // Always apply roles if available (for spectator mode, we should see roles)
+          if (Object.keys(roles).length > 0) {
+            state.players = state.players.map(p => ({
+              ...p,
+              role: roles[p.seat]?.role || p.role,
+              team: roles[p.seat]?.team || p.team,
+            }));
+          }
+          setGameState(state);
+        }
+      }, [currentStateIndex, gameStates, roles]);
+      
+      // Auto-scroll chat log to bottom when new messages arrive
+      useEffect(() => {
+        if (chatLogRef.current) {
+          chatLogRef.current.scrollTop = chatLogRef.current.scrollHeight;
+        }
+      }, [gameState.messages]);
+
+      // Live streaming effect
+      useEffect(() => {
+        if (!isLive) return;
+        
+        const eventSource = new EventSource('/api/events');
+        
+        eventSource.onmessage = (event) => {
+          try {
+            const gameEvent = JSON.parse(event.data);
+            setLiveEvents(prev => [...prev, gameEvent]);
+            
+            // Process event to update game state
+            processLiveEvent(gameEvent);
+          } catch (err) {
+            console.error('Error parsing event:', err);
+          }
+        };
+        
+        eventSource.onerror = (err) => {
+          console.error('EventSource error:', err);
+          eventSource.close();
+        };
+        
+        // Check game status periodically
+        const statusInterval = setInterval(async () => {
+          try {
+            const res = await fetch('/api/status');
+            const data = await res.json();
+            setGameRunning(data.running);
+          } catch (err) {
+            console.error('Error checking status:', err);
+          }
+        }, 1000);
+        
+        return () => {
+          eventSource.close();
+          clearInterval(statusInterval);
+        };
+      }, [isLive]);
+      
+      // Process live events and build game state
+      const processLiveEvent = (event) => {
+        setLiveEvents(prev => {
+          const allEvents = [...prev, event];
+          
+          // Build a game log from all events
+          const logData = {
+            events: allEvents.map(e => ({
+              type: e.type,
+              data: e.data,
+              timestamp: e.timestamp
+            })),
+            start_time: allEvents[0]?.timestamp || Date.now() / 1000,
+            end_time: event.timestamp,
+            duration: (event.timestamp - (allEvents[0]?.timestamp || event.timestamp))
+          };
+          
+          // Parse the log to get current state
+          const parsed = parseGameLog(logData);
+          const extractedRoles = extractRoles(logData);
+          
+          if (parsed.states.length > 0) {
+            setGameStates(parsed.states);
+            setRoles(extractedRoles);
+            setCurrentStateIndex(parsed.states.length - 1); // Always show latest state
+            setGameLoaded(true);
+            setGameDuration(logData.duration);
+            
+            const latestState = parsed.states[parsed.states.length - 1];
+            if (Object.keys(extractedRoles).length > 0) {
+              latestState.players = latestState.players.map(p => ({
+                ...p,
+                role: extractedRoles[p.seat]?.role || p.role,
+                team: extractedRoles[p.seat]?.team || p.team,
+              }));
+            }
+            setGameState(latestState);
+          }
+          
+          return allEvents;
+        });
+      };
+      
+      const startLiveGame = async () => {
+        try {
+          const res = await fetch('/api/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ players: 7 })
+          });
+          
+          if (res.ok) {
+            setIsLive(true);
+            setLiveEvents([]);
+            setGameStates([]);
+            setGameLoaded(false);
+            setCurrentStateIndex(0);
+          } else {
+            const error = await res.json();
+            alert('Failed to start game: ' + (error.error || 'Unknown error'));
+          }
+        } catch (err) {
+          console.error('Error starting game:', err);
+          alert('Failed to start game: ' + err.message);
+        }
+      };
+      
+      const handleFileUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          setIsLive(false); // Turn off live mode when loading a file
+          const text = await file.text();
+          const data = JSON.parse(text);
+          const parsed = parseGameLog(data);
+          const extractedRoles = extractRoles(data);
+
+          setGameStates(parsed.states);
+          setRoles(extractedRoles);
+          setGameDuration(parsed.duration);
+          setCurrentStateIndex(0);
+          setGameLoaded(true);
+          setIsPlaying(false);
+
+          if (parsed.states.length > 0) {
+            const initialState = JSON.parse(JSON.stringify(parsed.states[0]));
+            // Apply roles if available
+            if (Object.keys(extractedRoles).length > 0) {
+              initialState.players = initialState.players.map(p => ({
+                ...p,
+                role: extractedRoles[p.seat]?.role || p.role || 'unknown',
+                team: extractedRoles[p.seat]?.team || p.team || 'unknown',
+              }));
+            }
+            setGameState(initialState);
+          }
+          
+        } catch (err) {
+          console.error('Failed to load game:', err);
+          alert('Failed to load game: ' + err.message);
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-[#0a0a0a] relative overflow-hidden">
+          <div className="noise-overlay" />
+          <div className="vignette" />
+          <div className="absolute inset-0 opacity-5">
+            <div className="absolute inset-0" style={{
+              backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 40px, rgba(212,167,66,0.1) 40px, rgba(212,167,66,0.1) 41px)`
+            }} />
+          </div>
+
+          <div className="relative z-10 h-screen flex flex-col overflow-hidden">
+            {/* Header */}
+            <header className="relative z-20 border-b border-gold/30 bg-black/60 backdrop-blur-md">
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-gold to-transparent" />
+              <div className="container mx-auto px-6 py-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12">
+                      <svg viewBox="0 0 100 80" className="w-full h-full fill-gold">
+                        <path d="M50 10 L60 25 L85 22 L70 35 L78 55 L50 42 L22 55 L30 35 L15 22 L40 25 Z" />
+                        <circle cx="50" cy="30" r="8" fill="#0a0a0a" />
+                        <circle cx="50" cy="30" r="5" fill="#d4a742" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h1 className="font-display text-4xl tracking-[0.2em] text-gold">SECRET HITLER</h1>
+                      <p className="font-mono text-xs text-gold/50 tracking-widest">AI ARENA • SPECTATOR MODE</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-6">
+                    {/* Playback Controls */}
+                    {gameLoaded && !isLive && (
+                      <div className="flex items-center gap-2 px-3 py-1 bg-black/40 rounded-lg border border-gold/20">
+                        <button onClick={() => { setCurrentStateIndex(prev => Math.max(0, prev - 1)); setIsPlaying(false); }}
+                          className="w-8 h-8 flex items-center justify-center text-gold/70 hover:text-gold transition-colors" title="Step Back">
+                          ⏮
+                        </button>
+                        <button onClick={() => setIsPlaying(!isPlaying)}
+                          className="w-10 h-10 flex items-center justify-center text-gold bg-gold/10 rounded-full hover:bg-gold/20 transition-colors" title={isPlaying ? 'Pause' : 'Play'}>
+                          {isPlaying ? '⏸' : '▶'}
+                        </button>
+                        <button onClick={() => { setCurrentStateIndex(prev => Math.min(gameStates.length - 1, prev + 1)); setIsPlaying(false); }}
+                          className="w-8 h-8 flex items-center justify-center text-gold/70 hover:text-gold transition-colors" title="Step Forward">
+                          ⏭
+                        </button>
+                        <div className="ml-2 px-2 py-1 bg-black/60 rounded">
+                          <span className="font-mono text-xs text-gold/60">{currentStateIndex + 1} / {gameStates.length}</span>
+                        </div>
+                      </div>
+                    )}
+                    <button onClick={() => setShowRoles(!showRoles)}
+                      className={`px-4 py-2 rounded-lg font-mono text-sm tracking-wide transition-all ${
+                        showRoles ? 'bg-gold/20 text-gold border border-gold/40' : 'bg-black/40 text-gold/50 border border-gold/20'
+                      }`}>
+                      {showRoles ? '👁 ROLES VISIBLE' : '👁‍🗨 ROLES HIDDEN'}
+                    </button>
+                    {!isLive && !gameRunning && (
+                      <button onClick={startLiveGame}
+                        className="px-4 py-2 rounded-lg font-mono text-sm tracking-wide bg-green-600/20 text-green-400 border border-green-500/40 hover:bg-green-600/30 transition-colors">
+                        ▶ START LIVE GAME
+                      </button>
+                    )}
+                    {isLive && (
+                      <>
+                        <div className="px-4 py-2 rounded-lg font-mono text-sm tracking-wide bg-red-600/20 text-red-400 border border-red-500/40 flex items-center gap-2">
+                          <span className="w-2 h-2 bg-red-400 rounded-full animate-pulse"></span>
+                          LIVE
+                        </div>
+                        <button onClick={async () => {
+                          try {
+                            const res = await fetch('/api/stop', { method: 'POST' });
+                            if (res.ok) {
+                              setIsLive(false);
+                              setGameRunning(false);
+                            }
+                          } catch (err) {
+                            console.error('Error stopping game:', err);
+                          }
+                        }}
+                          className="px-4 py-2 rounded-lg font-mono text-sm tracking-wide bg-red-600/20 text-red-400 border border-red-500/40 hover:bg-red-600/30 transition-colors">
+                          ⏹ END GAME
+                        </button>
+                      </>
+                    )}
+                    <label className="px-4 py-2 rounded-lg font-mono text-sm tracking-wide bg-gold/10 text-gold border border-gold/30 hover:bg-gold/20 transition-colors cursor-pointer">
+                      <input type="file" accept=".json" onChange={handleFileUpload} className="hidden" />
+                      LOAD GAME
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </header>
+
+            {/* Main */}
+            <main className="flex-1 relative overflow-hidden flex">
+              <div className="flex-1 relative flex items-center justify-center p-4">
+                <PlayersCircle players={gameState.players} messages={gameState.messages} showRoles={showRoles}>
+                  <GameBoard {...gameState} />
+                </PlayersCircle>
+              </div>
+              
+              {/* Chat Log Sidebar */}
+              <aside className="w-80 border-l border-gold/20 bg-black/40 backdrop-blur-sm flex flex-col">
+                <div className="p-4 border-b border-gold/20">
+                  <h2 className="font-display text-xl tracking-widest text-gold">CHAT LOG</h2>
+                  <div className="font-mono text-xs text-gold/50 mt-1">
+                    {gameState.messages?.length || 0} messages
+                  </div>
+                </div>
+                <div ref={chatLogRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+                  {gameState.messages && gameState.messages.length > 0 ? (
+                    gameState.messages.map((msg, i) => {
+                      const player = gameState.players?.find(p => p.seat === msg.seat);
+                      const modelStyle = player ? getModelStyle(player.name) : { color: '#888', icon: '●' };
+                      return (
+                        <div key={i} className="p-3 rounded-lg bg-white/5 border-l-2 border-gold/30">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-lg" style={{ color: modelStyle.color }}>{modelStyle.icon}</span>
+                            <span className="font-mono text-xs text-gold/70">#{msg.seat + 1}</span>
+                            <span className="font-body font-semibold text-sm text-white/90">{msg.name}</span>
+                            {showRoles && player && player.role !== 'unknown' && (
+                              <span className={`ml-auto px-2 py-0.5 rounded text-xs font-mono ${
+                                player.role === 'hitler' ? 'bg-black text-gold border border-gold' :
+                                player.role === 'fascist' ? 'bg-fascist-700 text-fascist-100' :
+                                'bg-liberal-700 text-liberal-100'
+                              }`}>
+                                {player.role === 'hitler' ? '☠' : player.role === 'fascist' ? '✕' : '✓'}
+                              </span>
+                            )}
+                          </div>
+                          <p className="font-body text-sm text-white/80 leading-relaxed pl-7">{msg.content}</p>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="text-center text-gray-500 font-mono text-sm py-8">
+                      No messages yet
+                    </div>
+                  )}
+                </div>
+              </aside>
+
+              {/* Round/Phase Info Overlay */}
+              <div className="absolute top-4 right-[340px] bg-black/60 backdrop-blur-sm rounded-lg p-3 border border-gold/20">
+                <div className="flex items-center gap-3">
+                  <div className="text-center">
+                    <div className="font-mono text-xs text-gold/60 mb-1">ROUND</div>
+                    <div className="font-display text-2xl text-gold">{gameState.round}</div>
+                  </div>
+                  <div className="h-12 w-px bg-gold/20" />
+                  <div className="text-center">
+                    <div className="font-mono text-xs text-gold/60 mb-1">PHASE</div>
+                    <div className="font-mono text-sm text-gold uppercase">
+                      {gameState.phase ? gameState.phase.replace(/_/g, ' ') : '—'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+                {/* Timeline Scrubber */}
+                {gameLoaded && !isLive && gameStates.length > 1 && (
+                <div className="absolute bottom-4 left-4 right-4">
+                  <div className="bg-black/60 backdrop-blur-sm rounded-lg p-4 border border-gold/20">
+                    <div className="flex items-center gap-4">
+                      <span className="font-mono text-xs text-gold/60">
+                        {currentStateIndex + 1} / {gameStates.length}
+                      </span>
+                      <input
+                        type="range"
+                        min="0"
+                        max={gameStates.length - 1}
+                        value={currentStateIndex}
+                        onChange={(e) => { setCurrentStateIndex(parseInt(e.target.value)); setIsPlaying(false); }}
+                        className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                        style={{ accentColor: '#d4a742' }}
+                      />
+                      <span className="font-mono text-xs text-gold/60">
+                        {formatDuration(gameDuration)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </main>
+
+            {/* Winner Overlay */}
+            {gameState.winner && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+                <div className={`text-center p-12 rounded-lg border-4 ${
+                  gameState.winner === 'liberal'
+                    ? 'bg-gradient-to-b from-liberal-900 to-liberal-950 border-liberal-500'
+                    : 'bg-gradient-to-b from-fascist-900 to-fascist-950 border-fascist-500'
+                }`}>
+                  <h2 className="font-display text-6xl mb-4 tracking-wider">
+                    {gameState.winner === 'liberal' ? 'LIBERALS' : 'FASCISTS'} WIN
+                  </h2>
+                  <p className="font-body text-xl text-gold/80">
+                    {gameState.winCondition?.replace(/_/g, ' ')}
+                  </p>
+                  <button
+                    onClick={() => setCurrentStateIndex(0)}
+                    className="mt-6 px-6 py-2 bg-gold/20 hover:bg-gold/30 border border-gold/50 rounded-lg font-mono text-sm text-gold transition-colors"
+                  >
+                    REPLAY FROM START
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!gameLoaded && (
+              <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40">
+                <div className="bg-gold/10 border border-gold/30 rounded-lg px-4 py-2">
+                  <span className="font-mono text-sm text-gold/70">DEMO MODE — Load a game log JSON to see real gameplay</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
