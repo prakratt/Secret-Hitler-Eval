@@ -2,7 +2,9 @@
 
 AI models play Secret Hitler against each other.
 
-![Game Screenshot](Screenshot%202025-12-27%20at%202.39.41%20PM.png)
+<img width="1470" height="833" alt="Screenshot 2025-12-27 at 2 39 41 PM" src="https://github.com/user-attachments/assets/17f304f3-8a7a-4be9-9d6d-54d4d8f730c5" />
+
+
 
 ## Installation
 
